@@ -84,6 +84,51 @@ github:
       auto_init: true
 ```
 
+## GitHub repository contents, issues, and pull requests
+
+A repository can be seeded with real content and history instead of the `auto_init` README. Use
+`git_source` to ingest a bare repository, which preserves the original commit SHAs, or `files` and
+`from_path` to build a single deterministic initial commit.
+
+Issues and pull requests are separate keys that share one number sequence, matching GitHub. Each
+`pull_requests` entry also produces an issue row, so its comments and numbering behave the same way.
+
+```yaml
+github:
+  git_dir: ./.emulate/git      # where bare repository mirrors live
+  repos:
+    - owner: mcp-demo
+      name: ndjson-readablestream
+      default_branch: main
+      git_source: ./fixture/repos/mcp-demo/ndjson-readablestream.git
+      labels:
+        - name: bug
+          color: d73a4a
+          description: Something isn't working
+      issues:
+        - number: 11
+          title: Malformed JSON can break streaming
+          state: open
+          user: octocat
+          labels: [bug]
+          body_file: ./issues/11.md
+          comments:
+            - user: octocat
+              body: Looking into it
+      pull_requests:
+        - number: 17
+          title: Release v1.4.0
+          state: closed
+          user: octocat
+          merged: true
+          base_ref: main
+          head_ref: release-1.4.0
+          head_sha: <sha>
+```
+
+Relative paths resolve against the directory holding the seed file, so a fixture can be moved or
+mounted without rewriting them. `scripts/import-github` produces exactly this shape.
+
 ## GitHub OAuth Apps
 
 Register OAuth applications so the emulator validates `client_id`, `client_secret`, and `redirect_uri` during the OAuth flow:

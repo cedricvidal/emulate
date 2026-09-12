@@ -8,6 +8,30 @@ allowed-tools: Bash(npx emulate:*), Bash(emulate:*), Bash(curl:*)
 
 Fully stateful GitHub REST API emulation. Creates, updates, and deletes persist in memory and affect related entities.
 
+## Git transport, gh CLI, and MCP
+
+Repositories are clonable and pushable over Git smart HTTP, and the emulator serves GraphQL as well
+as REST, so `gh` and the official GitHub MCP server work against it. `git` must be on PATH.
+
+```bash
+git clone http://localhost:4001/octocat/hello-world.git
+
+# gh: github.localhost is the one host gh uses over plain HTTP
+export HTTP_PROXY=http://127.0.0.1:4001 GH_HOST=github.localhost GH_TOKEN=test_token_admin
+gh issue view 11 -R octocat/hello-world
+
+# MCP: plain HTTP is accepted only for a loopback host, and Go never proxies localhost
+export GITHUB_HOST=http://localhost:4001 GITHUB_PERSONAL_ACCESS_TOKEN=test_token_admin
+```
+
+Only `HTTP_PROXY` is set, so HTTPS traffic such as `npm install` is unaffected.
+
+GraphQL is at `/graphql` and `/api/graphql`, REST at the root and under `/api/v3`, raw content at
+`/raw/:owner/:repo/:ref/:path`, and `POST /_emulate/reset` restores seed state.
+
+Import a real repository with `scripts/import-github <owner>/<repo> --as <owner>/<repo>`, which
+brings full history plus issues, pull requests, comments, and labels.
+
 ## Start
 
 ```bash

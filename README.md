@@ -482,6 +482,51 @@ vercel:
         - "http://localhost:3000/api/auth/callback/vercel"
 ```
 
+### GitHub repository contents, issues, and pull requests
+
+A repository can be seeded with real content and history instead of the `auto_init` README. Use
+`git_source` to ingest a bare repository, which preserves the original commit SHAs, or `files` and
+`from_path` to build a single deterministic initial commit.
+
+Issues and pull requests are separate keys that share one number sequence, matching GitHub. Each
+`pull_requests` entry also produces an issue row, so its comments and numbering behave the same way.
+
+```yaml
+github:
+  git_dir: ./.emulate/git      # where bare repository mirrors live
+  repos:
+    - owner: mcp-demo
+      name: ndjson-readablestream
+      default_branch: main
+      git_source: ./fixture/repos/mcp-demo/ndjson-readablestream.git
+      labels:
+        - name: bug
+          color: d73a4a
+          description: Something isn't working
+      issues:
+        - number: 11
+          title: Malformed JSON can break streaming
+          state: open
+          user: octocat
+          labels: [bug]
+          body_file: ./issues/11.md
+          comments:
+            - user: octocat
+              body: Looking into it
+      pull_requests:
+        - number: 17
+          title: Release v1.4.0
+          state: closed
+          user: octocat
+          merged: true
+          base_ref: main
+          head_ref: release-1.4.0
+          head_sha: <sha>
+```
+
+Relative paths resolve against the directory holding the seed file, so a fixture can be moved or
+mounted without rewriting them. `scripts/import-github` produces exactly this shape.
+
 ### GitHub OAuth Apps
 
 ```yaml
@@ -651,6 +696,81 @@ Any token of the form `vercel_blob_rw_<storeId>_<secret>` is accepted; the store
 ## GitHub API
 
 Every endpoint below is fully stateful. Creates, updates, and deletes persist in memory and affect related entities.
+
+### Git transport, gh CLI, and the GitHub MCP server
+
+Repositories are clonable and pushable over Git smart HTTP, and the emulator answers GraphQL as well
+as REST, so the `gh` CLI and the official GitHub MCP server work against it. `git` must be on PATH,
+because the transport runs `git upload-pack` and `git receive-pack`.
+
+```bash
+git clone http://localhost:4001/octocat/hello-world.git
+```
+
+`gh` addresses exactly one host over plain HTTP, `github.localhost`, and takes its token from
+`GH_TOKEN`. Pointing `HTTP_PROXY` at the emulator makes that host resolve with no DNS changes, no
+port 80, and no root:
+
+```bash
+export HTTP_PROXY=http://127.0.0.1:4001
+export GH_HOST=github.localhost
+export GH_TOKEN=test_token_admin
+
+gh issue view 11 -R octocat/hello-world
+gh pr create --head fix --base main --title Fix --body "Fixes #11"
+```
+
+Only `HTTP_PROXY` is set, so HTTPS traffic such as `npm install` is unaffected. `NO_PROXY` is the
+escape hatch.
+
+The GitHub MCP server accepts plain HTTP only for a loopback host, so point it at `localhost`
+directly. Go never proxies `localhost`, so it bypasses `HTTP_PROXY` and both can be configured at
+once:
+
+```bash
+export GITHUB_HOST=http://localhost:4001
+export GITHUB_PERSONAL_ACCESS_TOKEN=test_token_admin
+```
+
+GraphQL is served at `/graphql` and `/api/graphql`, REST is served at the root and under `/api/v3`,
+and raw file content is available at `/raw/:owner/:repo/:ref/:path`.
+
+### Importing a real repository
+
+`scripts/import-github` snapshots a real repository into seed state: full commit history, every issue
+and pull request with its comments, and the label set.
+
+```bash
+GITHUB_TOKEN=<token> scripts/import-github pamelafox/ndjson-readablestream \
+  --ref 30cbd398 --as mcp-demo/ndjson-readablestream --out ./fixture
+
+npx emulate start --service github --seed ./fixture/emulate.config.json
+```
+
+A token is recommended. With one, the import is a single GraphQL query; without one it falls back to
+REST, which is limited to 60 requests per hour for anonymous callers.
+
+### Resetting between runs
+
+`POST /_emulate/reset` clears the store, discards the repository mirrors so a pushed branch cannot
+leak into the next run, and re-applies the seed. Useful when the same instance serves several
+evaluation runs.
+
+### Container
+
+The `Dockerfile` builds an image that can import a repository and serve it in one command:
+
+```bash
+pnpm build && pnpm --filter emulate build:bundle
+docker build -t <user>/emulate-github:<tag> .
+
+docker run -e GITHUB_TOKEN=<token> -p 8080:80 <user>/emulate-github:<tag> \
+  scripts/import-github pamelafox/ndjson-readablestream --as mcp-demo/ndjson-readablestream
+```
+
+The CLI is bundled into a single file, so the image builds without registry access. See
+`docker-compose.yml` for a topology that serves `gh`, `git`, MCP, and REST to an agent container over
+plain HTTP.
 
 ### Users
 - `GET /user` - authenticated user
