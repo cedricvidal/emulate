@@ -1,0 +1,88 @@
+# Evaluation platform topology for the emulate GitHub simulator.
+#
+# The agent container shares the emulator's network namespace. That single
+# choice makes every agent-facing surface work over plain HTTP with no TLS and
+# no proxy:
+#
+#   - github-mcp-server only accepts plain HTTP when the host is literally
+#     localhost, 127.0.0.1 or ::1, so it must reach the emulator on loopback.
+#   - gh builds github.localhost URLs with no port, so the emulator answers on
+#     port 80 and the hostnames resolve to 127.0.0.1.
+#   - git inherits the same hostnames for clone, fetch, and push.
+#
+# It also gives per-run isolation for free: one emulator per agent container,
+# so parallel occurrences cannot see each other's branches or pull requests.
+#
+#   docker compose up --build
+#
+# Alternatives, if a shared network namespace is not acceptable:
+#
+#   1. Run the emulator as its own service with network aliases github.localhost
+#      and api.github.localhost on port 80. gh and git then work by hostname,
+#      but github-mcp-server still needs a loopback target, so the agent
+#      container has to run a forwarder such as
+#      `socat TCP-LISTEN:80,fork TCP:github.localhost:80`.
+#   2. Serve HTTPS from the emulator with a CA trusted inside the agent image.
+#      Closest to a real GHES setup, at the cost of certificate management on
+#      every run.
+
+services:
+  github-emulator:
+    build:
+      context: .
+    image: ${EMULATE_IMAGE:-emulate-github:dev}
+    container_name: emulate-github
+    environment:
+      # Needed only for the import. Unauthenticated REST is capped at 60
+      # requests per hour and the GraphQL API rejects anonymous calls outright.
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      EMULATE_PORT: "80"
+      EMULATE_BASE_URL: http://github.localhost
+    command:
+      - scripts/import-github
+      - ${IMPORT_REPO:-pamelafox/ndjson-readablestream}
+      - --ref
+      - ${IMPORT_REF:-30cbd398}
+      - --as
+      - ${IMPORT_AS:-mcp-demo/ndjson-readablestream}
+    volumes:
+      # Persist the import so later runs start from identical state with no
+      # network access. Remove this to re-import on every start.
+      - emulate-data:/data
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1/rate_limit').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  agent:
+    image: ${AGENT_IMAGE:-node:24-slim}
+    container_name: emulate-agent
+    depends_on:
+      github-emulator:
+        condition: service_healthy
+    # Share the emulator's network namespace so localhost reaches it.
+    network_mode: "service:github-emulator"
+    environment:
+      # gh CLI profile. github.localhost is the one host gh addresses over
+      # plain HTTP, and it takes its token from GH_TOKEN rather than
+      # GH_ENTERPRISE_TOKEN.
+      GH_HOST: github.localhost
+      GH_TOKEN: ${DEMO_TOKEN:-demo-token}
+      # MCP profile. Loopback is required for the plain HTTP scheme to pass
+      # github-mcp-server's own check.
+      GITHUB_HOST: http://localhost:80
+      GITHUB_PERSONAL_ACCESS_TOKEN: ${DEMO_TOKEN:-demo-token}
+      GITHUB_TOOLSETS: repos,issues,pull_requests
+    extra_hosts:
+      - "github.localhost:127.0.0.1"
+      - "api.github.localhost:127.0.0.1"
+    command: ["sleep", "infinity"]
+
+volumes:
+  emulate-data:
