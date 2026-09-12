@@ -3,7 +3,7 @@ import type { GitHubStore } from "./store.js";
 import type { GitHubBlob, GitHubCommit, GitHubRepo, GitHubTree, GitHubUser } from "./entities.js";
 import { formatUser, generateNodeId } from "./helpers.js";
 
-function gitObjectSha(type: "blob" | "tree" | "commit", content: Buffer): string {
+export function gitObjectSha(type: "blob" | "tree" | "commit", content: Buffer): string {
   const header = Buffer.from(`${type} ${content.byteLength}\0`, "utf8");
   return createHash("sha1").update(header).update(content).digest("hex");
 }
@@ -31,9 +31,9 @@ export function findOrCreateBlob(gh: GitHubStore, repoId: number, content: Buffe
   return gh.blobs.get(blob.id)!;
 }
 
-type GitTreeEntry = GitHubTree["tree"][number];
+export type GitTreeEntry = GitHubTree["tree"][number];
 
-function treeContent(entries: GitTreeEntry[]): Buffer {
+export function treeContent(entries: GitTreeEntry[]): Buffer {
   const ordered = [...entries].sort((left, right) => {
     const leftName = left.type === "tree" ? `${left.path}/` : left.path;
     const rightName = right.type === "tree" ? `${right.path}/` : right.path;
@@ -84,7 +84,7 @@ function gitIdentityDate(date: string): string {
   return `${Math.floor(milliseconds / 1000)} ${offset}`;
 }
 
-function gitCommitContent(data: GitCommitData): Buffer {
+export function gitCommitContent(data: GitCommitData): Buffer {
   const headers = [`tree ${data.tree_sha}`, ...data.parent_shas.map((sha) => `parent ${sha}`)];
   headers.push(`author ${data.author_name} <${data.author_email}> ${gitIdentityDate(data.author_date)}`);
   headers.push(`committer ${data.committer_name} <${data.committer_email}> ${gitIdentityDate(data.committer_date)}`);
