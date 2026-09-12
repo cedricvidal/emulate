@@ -1,4 +1,6 @@
 import { createHmac, generateKeyPair } from "crypto";
+import { readFileSync } from "fs";
+import { isAbsolute, resolve as resolvePath } from "path";
 import type { Hono } from "@emulators/core";
 import type {
   ServicePlugin,
@@ -34,6 +36,20 @@ import { metaRoutes } from "./routes/meta.js";
 import { oauthRoutes } from "./routes/oauth.js";
 import { appsRoutes } from "./routes/apps.js";
 import { installationTokenRoutes } from "./routes/installation-tokens.js";
+import { gitTransportRoutes } from "./routes/git-transport.js";
+import { graphqlRoutes } from "./routes/graphql.js";
+import { ghesRoutes } from "./routes/ghes.js";
+import { controlRoutes } from "./routes/control.js";
+import { setGitDir } from "./git-mirror.js";
+import { seedRepoContents } from "./seed-contents.js";
+import {
+  seedIssues,
+  seedLabels,
+  seedPullRequests,
+  type SeedIssue,
+  type SeedLabel,
+  type SeedPullRequest,
+} from "./seed-issues.js";
 import { findOrCreateBlob, findOrCreateCommit, findOrCreateTree } from "./git-helpers.js";
 
 export { getGitHubStore, type GitHubStore } from "./store.js";
@@ -41,6 +57,16 @@ export * from "./entities.js";
 
 export interface GitHubSeedConfig {
   port?: number;
+  /**
+   * Directory that relative paths in this config resolve against, such as
+   * `git_source`, `from_path`, and `body_file`. Defaults to the process cwd.
+   */
+  base_dir?: string;
+  /**
+   * Directory holding the bare repository mirrors that back Git smart HTTP.
+   * When unset, Git transport is disabled and only the REST API is served.
+   */
+  git_dir?: string;
   users?: Array<{
     login: string;
     name?: string;
@@ -68,6 +94,32 @@ export interface GitHubSeedConfig {
     topics?: string[];
     default_branch?: string;
     auto_init?: boolean;
+    /**
+     * Path to a bare repository whose full history is ingested into the store.
+     * Preserves real commit SHAs, so imported pull requests keep resolvable
+     * base and head SHAs. Takes precedence over `files` and `auto_init`.
+     */
+    git_source?: string;
+    /**
+     * Path to a directory whose contents become a single deterministic initial
+     * commit. Simpler than `git_source` when history does not matter.
+     */
+    from_path?: string;
+    /** Inline file contents, mapped to the same deterministic initial commit. */
+    files?: Record<string, string>;
+    /** Overrides for the deterministic initial commit used by `files`/`from_path`. */
+    initial_commit?: {
+      message?: string;
+      author_name?: string;
+      author_email?: string;
+      date?: string;
+    };
+    /** Repository labels. */
+    labels?: SeedLabel[];
+    /** Issues, excluding pull requests. Shares one number sequence with `pull_requests`. */
+    issues?: SeedIssue[];
+    /** Pull requests. Each produces both an issue row and a pull request row. */
+    pull_requests?: SeedPullRequest[];
   }>;
   oauth_apps?: Array<{
     client_id: string;
@@ -219,8 +271,12 @@ export function needsGeneratedSecrets(config: Record<string, unknown>): boolean 
   return ((config.apps as GitHubSeedConfig["apps"] | undefined) ?? []).some((app) => app.private_key === undefined);
 }
 
-export function createAppKeyResolver(store: Store): AppKeyResolver {
-  return (appId: number) => {
+function resolveSeedPath(config: GitHubSeedConfig, path: string): string {
+  if (isAbsolute(path)) return path;
+  return resolvePath(config.base_dir ?? process.cwd(), path);
+}
+
+export function createAppKeyResolver(store: Store): AppKeyResolver {  return (appId: number) => {
     try {
       const gh = getGitHubStore(store);
       const ghApp = gh.apps.all().find((app) => app.app_id === appId);
@@ -280,7 +336,20 @@ function seedDefaults(store: Store, baseUrl: string): void {
   gh.users.update(admin.id, { node_id: generateNodeId("User", admin.id) });
 }
 
+/**
+ * Last applied seed, kept so POST /_emulate/reset can restore identical
+ * starting state between evaluation runs.
+ */
+let lastSeed: { baseUrl: string; config: GitHubSeedConfig } | null = null;
+
+function reseedHook(store: Store): void {
+  if (!lastSeed) return;
+  seedDefaults(store, lastSeed.baseUrl);
+  seedFromConfig(store, lastSeed.baseUrl, lastSeed.config);
+}
+
 export function seedFromConfig(store: Store, baseUrl: string, config: GitHubSeedConfig): void {
+  lastSeed = { baseUrl, config };
   for (const app of config.apps ?? []) {
     if (!app.private_key) {
       throw new Error(
@@ -289,7 +358,15 @@ export function seedFromConfig(store: Store, baseUrl: string, config: GitHubSeed
     }
   }
 
+  // Long bodies live beside the config as files rather than inline in YAML,
+  // so paths resolve relative to the seed file when one is known.
+  const readSeedFile = (path: string): string => readFileSync(resolveSeedPath(config, path), "utf8");
+
   const gh = getGitHubStore(store);
+
+  if (config.git_dir) {
+    setGitDir(config.git_dir);
+  }
 
   if (config.users) {
     for (const u of config.users) {
@@ -402,7 +479,15 @@ export function seedFromConfig(store: Store, baseUrl: string, config: GitHubSeed
       });
       gh.repos.update(repo.id, { node_id: generateNodeId("Repository", repo.id) });
 
-      if (r.auto_init !== false) {
+      if (
+        seedRepoContents(gh, repo, owner.id, {
+          ...r,
+          git_source: r.git_source ? resolveSeedPath(config, r.git_source) : undefined,
+          from_path: r.from_path ? resolveSeedPath(config, r.from_path) : undefined,
+        })
+      ) {
+        // A content source supplies the history, so skip the auto_init README.
+      } else if (r.auto_init !== false) {
         const readme = `# ${r.name}\n${r.description ? `\n${r.description}\n` : ""}`;
         const readmeSize = Buffer.byteLength(readme, "utf8");
         const blob = findOrCreateBlob(gh, repo.id, Buffer.from(readme, "utf8"));
@@ -439,6 +524,16 @@ export function seedFromConfig(store: Store, baseUrl: string, config: GitHubSeed
         gh.refs.update(refRow.id, { node_id: generateNodeId("Ref", refRow.id) });
 
         gh.repos.update(repo.id, { pushed_at: repo.created_at, size: 1 });
+      }
+
+      if (r.labels?.length) {
+        seedLabels(gh, repo, r.labels);
+      }
+      if (r.issues?.length) {
+        seedIssues(gh, repo, r.issues, readSeedFile, owner.id);
+      }
+      if (r.pull_requests?.length) {
+        seedPullRequests(gh, repo, r.pull_requests, readSeedFile, owner.id);
       }
 
       if (ownerType === "User") {
@@ -648,6 +743,12 @@ export const githubPlugin: ServicePlugin = {
     appsRoutes(ctx);
     installationTokenRoutes(ctx);
     contentsRoutes(ctx);
+    graphqlRoutes(ctx);
+    ghesRoutes(ctx);
+    controlRoutes(ctx, { reseed: reseedHook });
+    // Git smart HTTP. Registered before the catch-all commits route so that
+    // "/:owner/:repo.git/..." is matched by the transport rather than shadowed.
+    gitTransportRoutes(ctx);
     // Registered last: the catch-all /commits/:ref{.+} route must not shadow
     // /commits/:sha/comments (comments.ts) or /commits/:ref/check-* (checks.ts).
     commitsRoutes(ctx);

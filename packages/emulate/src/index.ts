@@ -23,7 +23,22 @@ Framework adapters:
 
 GitHub API coverage:
   Includes repository contents, raw downloads, commit history, commit details, and ref comparisons.
+  Serves GraphQL at /graphql and /api/graphql, and REST under /api/v3 for GitHub Enterprise clients.
   Inspect minted installation-token metadata at GET /_emulate/installation-tokens.
+  Reset to seed state with POST /_emulate/reset.
+
+GitHub Git transport:
+  Repositories are clonable and pushable over Git smart HTTP at /<owner>/<repo>.git.
+  Requires git on PATH. Set github.git_dir in the seed, or EMULATE_GIT_DIR, to choose the mirror root.
+
+Using the gh CLI and the GitHub MCP server:
+  gh   HTTP_PROXY=http://127.0.0.1:<port> GH_HOST=github.localhost GH_TOKEN=<token> gh issue view 11 -R <owner>/<repo>
+  MCP  GITHUB_HOST=http://localhost:<port> GITHUB_PERSONAL_ACCESS_TOKEN=<token>
+  Only HTTP_PROXY is needed, so npm and other HTTPS traffic is unaffected.
+
+Importing a real repository:
+  scripts/import-github <owner>/<repo> --as <owner>/<repo> --out <dir>
+  Imports full history plus issues, pull requests, comments, and labels.
 
 Linear API coverage:
   Issue queries and mutations include numeric priority and derived priorityLabel fields.
