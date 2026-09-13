@@ -24,7 +24,24 @@ if ! command -v git >/dev/null 2>&1; then
   exit 1
 fi
 
+# Anything that is not a tagged release announces itself, so a preview image
+# pulled from a branch cannot be mistaken for a supported build.
+announce_channel() {
+  case "${EMULATE_BUILD_CHANNEL:-local}" in
+    release) return ;;
+    *)
+      echo "entrypoint: ------------------------------------------------------------" >&2
+      echo "entrypoint: UNOFFICIAL PREVIEW BUILD (channel: ${EMULATE_BUILD_CHANNEL:-local})" >&2
+      echo "entrypoint: Built from ${EMULATE_BUILD_REF:-unknown}, not a release, and" >&2
+      echo "entrypoint: not affiliated with the upstream emulate project." >&2
+      echo "entrypoint: Interfaces may change or break without notice." >&2
+      echo "entrypoint: ------------------------------------------------------------" >&2
+      ;;
+  esac
+}
+
 serve() {
+  announce_channel
   local seed_args=()
   if [ -f "${IMPORT_DIR}/emulate.config.json" ]; then
     seed_args=(--seed "${IMPORT_DIR}/emulate.config.json")

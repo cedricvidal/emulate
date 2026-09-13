@@ -20,6 +20,20 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/* \
   && git --version
 
+# Marks how the image was produced. Preview builds from an unmerged branch
+# announce themselves at startup so nobody mistakes one for a release.
+ARG EMULATE_BUILD_CHANNEL=local
+ARG EMULATE_BUILD_REF=unknown
+ENV EMULATE_BUILD_CHANNEL=$EMULATE_BUILD_CHANNEL
+ENV EMULATE_BUILD_REF=$EMULATE_BUILD_REF
+
+LABEL org.opencontainers.image.title="emulate GitHub emulator"
+LABEL org.opencontainers.image.description="Unofficial preview build of the emulate GitHub emulator with Git transport and GraphQL. Not a release, and not affiliated with the upstream project."
+LABEL org.opencontainers.image.source="https://github.com/cedricvidal/emulate"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
+LABEL dev.emulate.build.channel=$EMULATE_BUILD_CHANNEL
+LABEL dev.emulate.build.ref=$EMULATE_BUILD_REF
+
 WORKDIR /app
 
 COPY packages/emulate/dist-bundle/ ./emulate/

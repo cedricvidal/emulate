@@ -809,27 +809,35 @@ The CLI is bundled into a single file, so the image builds without registry acce
 `docker-compose.yml` for a topology that serves `gh`, `git`, MCP, and REST to an agent container over
 plain HTTP.
 
-### Publishing the image
+### Publishing a preview image
 
-`docker build` produces an image for the host architecture only, so an image built on an Apple
-Silicon machine will not start on an amd64 runner. Building for both architectures needs Buildx,
-which is a separate plugin and is not always installed:
+The `Container Image` workflow publishes to GHCR on demand. It runs on
+`workflow_dispatch` only, builds `linux/amd64` and `linux/arm64`, authenticates with the built in
+`GITHUB_TOKEN`, and smoke tests the image it just pushed before the run is allowed to pass.
+
+This code is not part of an upstream release, so the workflow is written so that nobody can mistake
+the result for one:
+
+- **`latest` is never published**, and a release-looking tag is rejected outright.
+- The **image name carries the author and the pull request**, for example
+  `ghcr.io/<user>/<user>-emulate-github-pr<n>`. The handle is repeated inside the name deliberately:
+  mirroring the image into another registry replaces the namespace, and then the name is all that is
+  left to say where it came from.
+- The **tag carries the version, scope, and commit**, for example `0.11.1-preview.pr12.a1b2c3d`.
+- The image is **labelled** as an unofficial preview, and the container **prints a notice on
+  startup** saying so. The notice disappears when `EMULATE_BUILD_CHANNEL` is `release`.
+
+Building locally is fine for development, but note that `docker build` produces an image for the
+host architecture only, so one built on Apple Silicon will not start on an amd64 runner. Multi
+architecture builds need Buildx, which is a separate plugin and is not always installed:
 
 ```bash
-docker buildx create --use --name emulate
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -t ghcr.io/<user>/emulate-github:<tag> --push .
+  -t ghcr.io/<user>/<image>:<tag> --push .
 ```
 
-Without Buildx, build and push a single architecture:
-
-```bash
-docker build -t ghcr.io/<user>/emulate-github:<tag> .
-docker push ghcr.io/<user>/emulate-github:<tag>
-```
-
-For GHCR, authenticate with a token carrying the `write:packages` scope. A `gh` token does not have
-it by default:
+Pushing to GHCR by hand needs a token with the `write:packages` scope, which a `gh` token does not
+carry by default:
 
 ```bash
 gh auth refresh -h github.com -s write:packages
@@ -837,8 +845,7 @@ gh auth token | docker login ghcr.io -u <user> --password-stdin
 ```
 
 New GHCR packages are private until their visibility is changed, so a puller needs either a public
-package or a pull secret. Docker Hub works the same way with `docker login` and a
-`<user>/emulate-github:<tag>` name.
+package or a pull secret.
 
 ### Users
 - `GET /user` - authenticated user
