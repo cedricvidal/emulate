@@ -809,6 +809,37 @@ The CLI is bundled into a single file, so the image builds without registry acce
 `docker-compose.yml` for a topology that serves `gh`, `git`, MCP, and REST to an agent container over
 plain HTTP.
 
+### Publishing the image
+
+`docker build` produces an image for the host architecture only, so an image built on an Apple
+Silicon machine will not start on an amd64 runner. Building for both architectures needs Buildx,
+which is a separate plugin and is not always installed:
+
+```bash
+docker buildx create --use --name emulate
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -t ghcr.io/<user>/emulate-github:<tag> --push .
+```
+
+Without Buildx, build and push a single architecture:
+
+```bash
+docker build -t ghcr.io/<user>/emulate-github:<tag> .
+docker push ghcr.io/<user>/emulate-github:<tag>
+```
+
+For GHCR, authenticate with a token carrying the `write:packages` scope. A `gh` token does not have
+it by default:
+
+```bash
+gh auth refresh -h github.com -s write:packages
+gh auth token | docker login ghcr.io -u <user> --password-stdin
+```
+
+New GHCR packages are private until their visibility is changed, so a puller needs either a public
+package or a pull secret. Docker Hub works the same way with `docker login` and a
+`<user>/emulate-github:<tag>` name.
+
 ### Users
 - `GET /user` - authenticated user
 - `PATCH /user` - update profile
