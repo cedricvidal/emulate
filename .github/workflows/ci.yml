@@ -37,3 +37,92 @@ jobs:
       - run: pnpm lint
 
       - run: pnpm test
+
+  container:
+    name: Container image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      - run: pnpm --filter emulate build:bundle
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Built and exercised, never pushed. Publishing is a separate manual
+      # workflow, so this only has to prove the image still works.
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: emulate-github:ci
+          build-args: |
+            EMULATE_BUILD_CHANNEL=ci
+            EMULATE_BUILD_REF=${{ github.repository }}@${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # No network dependency, so this runs everywhere including fork pull
+      # requests: it proves the bundle, entrypoint, and git install are intact.
+      - name: Smoke test without a seed
+        run: |
+          set -euo pipefail
+          docker run -d --name emulate-ci -p 8080:80 emulate-github:ci
+          for i in $(seq 1 30); do
+            curl -fsS http://localhost:8080/rate_limit >/dev/null 2>&1 && break
+            if [ "$i" = "30" ]; then docker logs emulate-ci; exit 1; fi
+            sleep 2
+          done
+          docker exec emulate-ci git --version >/dev/null
+          docker logs emulate-ci 2>&1 | grep -q "UNOFFICIAL PREVIEW BUILD" \
+            || { echo "expected the non-release notice" >&2; docker logs emulate-ci; exit 1; }
+          docker rm -f emulate-ci >/dev/null
+
+      # Exercises the import, git transport, and API together. Skipped when no
+      # token is available, since the GraphQL API rejects anonymous callers.
+      - name: Smoke test an import
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "no token available, skipping"
+            exit 0
+          fi
+
+          docker run -d --name emulate-ci-import -p 8081:80 -e GITHUB_TOKEN="$GH_TOKEN" \
+            emulate-github:ci \
+            scripts/import-github vercel-labs/emulate \
+            --ref ceb5884a1a2b1ad2d418955714b241b6018bd056 --as demo/emulate
+
+          for i in $(seq 1 60); do
+            curl -fsS -H 'Authorization: token demo-token' \
+              http://localhost:8081/repos/demo/emulate >/dev/null 2>&1 && break
+            if [ "$i" = "60" ]; then docker logs emulate-ci-import; exit 1; fi
+            sleep 2
+          done
+
+          STATE=$(curl -fsS -H 'Authorization: token demo-token' \
+            http://localhost:8081/repos/demo/emulate/issues/6 \
+            | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>console.log(JSON.parse(d).state))")
+          [ "$STATE" = "open" ] || { echo "issue 6 expected open, got $STATE" >&2; exit 1; }
+
+          git -c safe.bareRepository=all clone -q http://localhost:8081/demo/emulate.git /tmp/ci-clone
+          HEAD_SHA=$(git -C /tmp/ci-clone rev-parse HEAD)
+          EXPECTED=ceb5884a1a2b1ad2d418955714b241b6018bd056
+          [ "$HEAD_SHA" = "$EXPECTED" ] || { echo "clone expected $EXPECTED, got $HEAD_SHA" >&2; exit 1; }
+
+          echo "import smoke passed: issue 6 open, clone pinned to ${EXPECTED:0:12}"
+          docker rm -f emulate-ci-import >/dev/null

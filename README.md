@@ -811,9 +811,12 @@ plain HTTP.
 
 ### Publishing a preview image
 
-The `Container Image` workflow publishes to GHCR on demand. It runs on
-`workflow_dispatch` only, builds `linux/amd64` and `linux/arm64`, authenticates with the built in
-`GITHUB_TOKEN`, and smoke tests the image it just pushed before the run is allowed to pass.
+CI builds the image and smoke tests it on every pull request without pushing anything, so a broken
+`Dockerfile` or entrypoint fails there rather than at publish time.
+
+Publishing is separate. The `Container Image` workflow pushes to GHCR on `workflow_dispatch` only,
+builds `linux/amd64` and `linux/arm64`, authenticates with the built in `GITHUB_TOKEN`, and smoke
+tests the image it just pushed before the run is allowed to pass.
 
 This code is not part of an upstream release, so the workflow is written so that nobody can mistake
 the result for one:
