@@ -1,7 +1,7 @@
 import { createServer, serve, type AppKeyResolver, type Store } from "@emulators/core";
 import { SERVICE_REGISTRY, SERVICE_NAMES, type ServiceName } from "../registry.js";
 import { readFileSync, existsSync } from "fs";
-import { resolve } from "path";
+import { dirname, resolve } from "path";
 import { parse as parseYaml } from "yaml";
 import pc from "picocolors";
 import {
@@ -42,6 +42,8 @@ interface SeedConfig {
 interface LoadResult {
   config: SeedConfig;
   source: string;
+  /** Directory of the seed file, used to resolve relative paths inside it. */
+  baseDir: string;
 }
 
 interface PreparedService {
@@ -65,7 +67,7 @@ function loadSeedConfig(seedPath?: string): LoadResult | null {
     const content = readFileSync(fullPath, "utf-8");
     try {
       const config = fullPath.endsWith(".json") ? JSON.parse(content) : parseYaml(content);
-      return { config, source: seedPath };
+      return { config, source: seedPath, baseDir: dirname(fullPath) };
     } catch (err) {
       console.error(`Failed to parse ${seedPath}: ${err instanceof Error ? err.message : err}`);
       process.exit(1);
@@ -87,7 +89,7 @@ function loadSeedConfig(seedPath?: string): LoadResult | null {
       const content = readFileSync(fullPath, "utf-8");
       try {
         const config = fullPath.endsWith(".json") ? JSON.parse(content) : parseYaml(content);
-        return { config, source: file };
+        return { config, source: file, baseDir: dirname(fullPath) };
       } catch (err) {
         console.error(`Failed to parse ${file}: ${err instanceof Error ? err.message : err}`);
         process.exit(1);
@@ -108,6 +110,7 @@ export async function prepareStartServices(
   seedConfig: SeedConfig | null,
   options: Pick<StartOptions, "port" | "baseUrl" | "portless">,
   materializeGeneratedSecrets: boolean,
+  seedBaseDir: string | null = null,
 ): Promise<{
   prepared: PreparedService[];
   portlessAliases: PortlessAlias[];
@@ -122,7 +125,13 @@ export async function prepareStartServices(
     const entry = SERVICE_REGISTRY[svc];
     const loadedSvc = await entry.load();
 
-    const inputSvcSeedConfig = seedConfig?.[svc] as Record<string, unknown> | undefined;
+    const rawSvcSeedConfig = seedConfig?.[svc] as Record<string, unknown> | undefined;
+    // Relative paths inside a seed file resolve against the file's own
+    // directory, so a config can be moved or mounted without rewriting paths.
+    const inputSvcSeedConfig =
+      rawSvcSeedConfig && seedBaseDir && rawSvcSeedConfig.base_dir === undefined
+        ? { ...rawSvcSeedConfig, base_dir: seedBaseDir }
+        : rawSvcSeedConfig;
     const preparedSeed =
       materializeGeneratedSecrets && inputSvcSeedConfig && loadedSvc.prepareSeed
         ? await loadedSvc.prepareSeed(inputSvcSeedConfig)
@@ -320,6 +329,7 @@ export async function startCommand(options: StartOptions): Promise<void> {
     seedConfig,
     { port: basePort, baseUrl: options.baseUrl, portless: options.portless },
     Boolean(generatedSecretsTarget),
+    loaded?.baseDir ?? null,
   );
 
   const serviceUrls: Array<{ name: string; url: string }> = [];

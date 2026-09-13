@@ -54,6 +54,12 @@ export function createServer(plugin: ServicePlugin, options: ServerOptions = {})
 
   app.use("*", async (c, next) => {
     const token = c.get("authToken") ?? "__anonymous__";
+    const user = c.get("authUser");
+    if (token !== "__anonymous__" && user && !user.installation) {
+      c.header("X-OAuth-Scopes", (c.get("authScopes") ?? []).join(", "));
+      c.header("X-Accepted-OAuth-Scopes", "");
+    }
+
     const now = Math.floor(Date.now() / 1000);
 
     if (now - lastPruneAt > 3600) {

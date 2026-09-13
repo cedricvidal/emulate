@@ -482,6 +482,59 @@ vercel:
         - "http://localhost:3000/api/auth/callback/vercel"
 ```
 
+### GitHub repository contents, issues, and pull requests
+
+A repository can be seeded with real content and history instead of the `auto_init` README. Use
+`git_source` to ingest a bare repository, which preserves the original commit SHAs, or `files` and
+`from_path` to build a single deterministic initial commit.
+
+Issues and pull requests are separate keys that share one number sequence, matching GitHub. Each
+`pull_requests` entry also produces an issue row, so its comments and numbering behave the same way.
+
+```yaml
+github:
+  git_dir: ./.emulate/git      # where bare repository mirrors live
+  repos:
+    - owner: demo
+      name: emulate
+      default_branch: main
+      # Bare repository pinned to ceb5884a1a2b1ad2d418955714b241b6018bd056, the
+      # commit immediately before the Slack emulator merged. main points there,
+      # so a clone checks out that commit.
+      git_source: ./fixture/repos/demo/emulate.git
+      labels:
+        - name: enhancement
+          color: a2eeef
+          description: New feature or request
+      issues:
+        - number: 6
+          title: Slack Support
+          state: open           # still open at the pinned commit
+          user: octocat
+          labels: [enhancement]
+          body_file: ./issues/6.md
+          comments:
+            - user: octocat
+              body: Would be quite a nice addition.
+      pull_requests:
+        - number: 10
+          title: "feat: add slack service emulator"
+          state: open           # merged later, so not merged at this point
+          user: octocat
+          base_ref: main
+          base_sha: ceb5884a1a2b1ad2d418955714b241b6018bd056
+          head_ref: osc/6-slack-service-emulator
+          head_sha: 88f2748f3c047340d29bb6e8492bc41ef50516ae
+```
+
+The pinned commit is this pull request's own base, which is what makes the example self-consistent:
+`main` is where the branch was cut from, and the pull request that resolves issue #6 is still open.
+Its head commit is not reachable from `main`, so it stays dangling, exactly as a merged and deleted
+branch behaves on real GitHub.
+
+Relative paths resolve against the directory holding the seed file, so a fixture can be moved or
+mounted without rewriting them. `scripts/import-github` produces exactly this shape.
+
 ### GitHub OAuth Apps
 
 ```yaml
@@ -651,6 +704,151 @@ Any token of the form `vercel_blob_rw_<storeId>_<secret>` is accepted; the store
 ## GitHub API
 
 Every endpoint below is fully stateful. Creates, updates, and deletes persist in memory and affect related entities.
+
+### Git transport, gh CLI, and the GitHub MCP server
+
+Repositories are clonable and pushable over Git smart HTTP, and the emulator answers GraphQL as well
+as REST, so the `gh` CLI and the official GitHub MCP server work against it. `git` must be on PATH,
+because the transport runs `git upload-pack` and `git receive-pack`.
+
+```bash
+git clone http://localhost:4001/octocat/hello-world.git
+```
+
+`gh` addresses exactly one host over plain HTTP, `github.localhost`, and takes its token from
+`GH_TOKEN`. Pointing `HTTP_PROXY` at the emulator makes that host resolve with no DNS changes, no
+port 80, and no root:
+
+```bash
+export HTTP_PROXY=http://127.0.0.1:4001
+export GH_HOST=github.localhost
+export GH_TOKEN=test_token_admin
+
+gh issue view 11 -R octocat/hello-world
+gh pr create --head fix --base main --title Fix --body "Fixes #11"
+```
+
+Only `HTTP_PROXY` is set, so HTTPS traffic such as `npm install` is unaffected. `NO_PROXY` is the
+escape hatch.
+
+The GitHub MCP server accepts plain HTTP only for a loopback host, so point it at `localhost`
+directly. Go never proxies `localhost`, so it bypasses `HTTP_PROXY` and both can be configured at
+once:
+
+```bash
+export GITHUB_HOST=http://localhost:4001
+export GITHUB_PERSONAL_ACCESS_TOKEN=test_token_admin
+```
+
+GraphQL is served at `/graphql` and `/api/graphql`, REST is served at the root and under `/api/v3`,
+and raw file content is available at `/raw/:owner/:repo/:ref/:path`.
+
+### Importing a real repository
+
+`scripts/import-github` snapshots a real repository into seed state: full commit history, every issue
+and pull request with its comments, and the label set.
+
+```bash
+GITHUB_TOKEN=<token> scripts/import-github vercel-labs/emulate \
+  --ref ceb5884a1a2b1ad2d418955714b241b6018bd056 --as demo/emulate --out ./fixture
+
+npx emulate start --service github --seed ./fixture/emulate.config.json
+```
+
+That example pins this repository to the commit immediately before the Slack emulator landed, so the
+import contains the repository as it stood with issue #6, "Slack Support", still open and pull
+request #10 not yet merged. It is a convenient fixture precisely because the intended resolution is
+already public.
+
+`--ref` rewrites the mirror so a clone checks out that commit and carries only its history. Because a
+pinned snapshot implies a point in time, issue and pull request state is rewound to the ref's commit
+date as well: anything created later is left out, and anything closed or merged later comes back as
+open. Pass `--as-of <iso>` to choose a different moment, or omit `--ref` to import the current state.
+
+A token is recommended. With one, the import is a single GraphQL query; without one it falls back to
+REST, which is limited to 60 requests per hour for anonymous callers.
+
+### Checking a scenario end to end
+
+`scripts/scenario-e2e.sh <base-url>` drives the whole loop against a running emulator and validates
+it the way an evaluation harness would: the issue is readable and open, the repository clones at the
+pinned commit, a branch pushes, and a pull request lands against the default branch with a closing
+reference and a gradeable diff.
+
+```bash
+SCENARIO_HEAD=ceb5884a1a2b1ad2d418955714b241b6018bd056 scripts/scenario-e2e.sh http://localhost:8080
+```
+
+`SCENARIO_REPO`, `SCENARIO_ISSUE`, `SCENARIO_EDIT_FILE`, and `SCENARIO_HEAD` select the target.
+Installing and building the imported project is opt in through `SCENARIO_BUILD=1`, since an older
+pinned commit will not always build with a current toolchain.
+
+### Resetting between runs
+
+`POST /_emulate/reset` clears the store, discards the repository mirrors so a pushed branch cannot
+leak into the next run, and re-applies the seed. Useful when the same instance serves several
+evaluation runs.
+
+### Container
+
+The `Dockerfile` builds an image that can import a repository and serve it in one command:
+
+```bash
+pnpm build && pnpm --filter emulate build:bundle
+docker build -t <user>/emulate-github:<tag> .
+
+docker run -e GITHUB_TOKEN=<token> -p 8080:80 <user>/emulate-github:<tag> \
+  scripts/import-github vercel-labs/emulate \
+  --ref ceb5884a1a2b1ad2d418955714b241b6018bd056 --as demo/emulate
+```
+
+Then `git clone http://localhost:8080/demo/emulate.git` checks out `ceb5884`, and
+`GET /repos/demo/emulate/issues/6` returns the open "Slack Support" issue.
+
+The CLI is bundled into a single file, so the image builds without registry access. See
+`docker-compose.yml` for a topology that serves `gh`, `git`, MCP, and REST to an agent container over
+plain HTTP.
+
+### Publishing a preview image
+
+CI builds the image and smoke tests it on every pull request without pushing anything, so a broken
+`Dockerfile` or entrypoint fails there rather than at publish time.
+
+Publishing is separate. The `Container Image` workflow pushes to GHCR on `workflow_dispatch` only,
+builds `linux/amd64` and `linux/arm64`, authenticates with the built in `GITHUB_TOKEN`, and smoke
+tests the image it just pushed before the run is allowed to pass.
+
+This code is not part of an upstream release, so the workflow is written so that nobody can mistake
+the result for one:
+
+- **`latest` is never published**, and a release-looking tag is rejected outright.
+- The **image name carries the author and the pull request**, for example
+  `ghcr.io/<user>/<user>-emulate-github-pr<n>`. The handle is repeated inside the name deliberately:
+  mirroring the image into another registry replaces the namespace, and then the name is all that is
+  left to say where it came from.
+- The **tag carries the version, scope, and commit**, for example `0.11.1-preview.pr12.a1b2c3d`.
+- The image is **labelled** as an unofficial preview, and the container **prints a notice on
+  startup** saying so. The notice disappears when `EMULATE_BUILD_CHANNEL` is `release`.
+
+Building locally is fine for development, but note that `docker build` produces an image for the
+host architecture only, so one built on Apple Silicon will not start on an amd64 runner. Multi
+architecture builds need Buildx, which is a separate plugin and is not always installed:
+
+```bash
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -t ghcr.io/<user>/<image>:<tag> --push .
+```
+
+Pushing to GHCR by hand needs a token with the `write:packages` scope, which a `gh` token does not
+carry by default:
+
+```bash
+gh auth refresh -h github.com -s write:packages
+gh auth token | docker login ghcr.io -u <user> --password-stdin
+```
+
+New GHCR packages are private until their visibility is changed, so a puller needs either a public
+package or a pull secret.
 
 ### Users
 - `GET /user` - authenticated user

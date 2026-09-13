@@ -84,6 +84,59 @@ github:
       auto_init: true
 ```
 
+## GitHub repository contents, issues, and pull requests
+
+A repository can be seeded with real content and history instead of the `auto_init` README. Use
+`git_source` to ingest a bare repository, which preserves the original commit SHAs, or `files` and
+`from_path` to build a single deterministic initial commit.
+
+Issues and pull requests are separate keys that share one number sequence, matching GitHub. Each
+`pull_requests` entry also produces an issue row, so its comments and numbering behave the same way.
+
+```yaml
+github:
+  git_dir: ./.emulate/git      # where bare repository mirrors live
+  repos:
+    - owner: demo
+      name: emulate
+      default_branch: main
+      # Bare repository pinned to ceb5884a1a2b1ad2d418955714b241b6018bd056, the
+      # commit immediately before the Slack emulator merged. main points there,
+      # so a clone checks out that commit.
+      git_source: ./fixture/repos/demo/emulate.git
+      labels:
+        - name: enhancement
+          color: a2eeef
+          description: New feature or request
+      issues:
+        - number: 6
+          title: Slack Support
+          state: open           # still open at the pinned commit
+          user: octocat
+          labels: [enhancement]
+          body_file: ./issues/6.md
+          comments:
+            - user: octocat
+              body: Would be quite a nice addition.
+      pull_requests:
+        - number: 10
+          title: "feat: add slack service emulator"
+          state: open           # merged later, so not merged at this point
+          user: octocat
+          base_ref: main
+          base_sha: ceb5884a1a2b1ad2d418955714b241b6018bd056
+          head_ref: osc/6-slack-service-emulator
+          head_sha: 88f2748f3c047340d29bb6e8492bc41ef50516ae
+```
+
+The pinned commit is this pull request's own base, which is what makes the example self-consistent:
+`main` is where the branch was cut from, and the pull request that resolves issue #6 is still open.
+Its head commit is not reachable from `main`, so it stays dangling, exactly as a merged and deleted
+branch behaves on real GitHub.
+
+Relative paths resolve against the directory holding the seed file, so a fixture can be moved or
+mounted without rewriting them. `scripts/import-github` produces exactly this shape.
+
 ## GitHub OAuth Apps
 
 Register OAuth applications so the emulator validates `client_id`, `client_secret`, and `redirect_uri` during the OAuth flow:

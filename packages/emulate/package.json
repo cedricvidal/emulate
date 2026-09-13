@@ -45,6 +45,7 @@
   "scripts": {
     "prepack": "cp ../../README.md .",
     "build": "tsup",
+    "build:bundle": "tsup --config tsup.bundle.config.ts",
     "dev": "tsup --watch",
     "test": "vitest run",
     "clean": "rm -rf dist .turbo",

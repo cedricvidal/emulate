@@ -8,6 +8,39 @@ allowed-tools: Bash(npx emulate:*), Bash(emulate:*), Bash(curl:*)
 
 Fully stateful GitHub REST API emulation. Creates, updates, and deletes persist in memory and affect related entities.
 
+## Git transport, gh CLI, and MCP
+
+Repositories are clonable and pushable over Git smart HTTP, and the emulator serves GraphQL as well
+as REST, so `gh` and the official GitHub MCP server work against it. `git` must be on PATH.
+
+```bash
+git clone http://localhost:4001/octocat/hello-world.git
+
+# gh: github.localhost is the one host gh uses over plain HTTP
+export HTTP_PROXY=http://127.0.0.1:4001 GH_HOST=github.localhost GH_TOKEN=test_token_admin
+gh issue view 11 -R octocat/hello-world
+
+# MCP: plain HTTP is accepted only for a loopback host, and Go never proxies localhost
+export GITHUB_HOST=http://localhost:4001 GITHUB_PERSONAL_ACCESS_TOKEN=test_token_admin
+```
+
+Only `HTTP_PROXY` is set, so HTTPS traffic such as `npm install` is unaffected.
+
+GraphQL is at `/graphql` and `/api/graphql`, REST at the root and under `/api/v3`, raw content at
+`/raw/:owner/:repo/:ref/:path`, and `POST /_emulate/reset` restores seed state.
+
+Import a real repository with `scripts/import-github`, which brings history plus issues, pull
+requests, comments, and labels:
+
+```bash
+GITHUB_TOKEN=<token> scripts/import-github vercel-labs/emulate \
+  --ref ceb5884a1a2b1ad2d418955714b241b6018bd056 --as demo/emulate --out ./fixture
+```
+
+`--ref` pins the snapshot: the clone checks out that commit and carries only its history, and issue
+and pull request state is rewound to the commit date, so anything closed or merged later comes back
+as open. Omit `--ref` to import current state, or use `--as-of <iso>` for a different moment.
+
 ## Start
 
 ```bash

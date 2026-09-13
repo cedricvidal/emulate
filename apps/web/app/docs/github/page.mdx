@@ -2,6 +2,77 @@
 
 Every endpoint below is fully stateful. Creates, updates, and deletes persist in memory and affect related entities.
 
+## Git transport
+
+Repositories are clonable and pushable over Git smart HTTP. `git` must be on PATH, because the
+transport runs `git upload-pack` and `git receive-pack`.
+
+```bash
+git clone http://localhost:4001/octocat/hello-world.git
+```
+
+Set `github.git_dir` in the seed, or `EMULATE_GIT_DIR`, to choose where the bare mirrors live.
+Without either, a temporary directory is created and removed on exit.
+
+## Using the gh CLI
+
+`gh` addresses exactly one host over plain HTTP, `github.localhost`, and reads its token from
+`GH_TOKEN`. Pointing `HTTP_PROXY` at the emulator makes that host resolve with no DNS changes, no
+port 80, and no root:
+
+```bash
+export HTTP_PROXY=http://127.0.0.1:4001
+export GH_HOST=github.localhost
+export GH_TOKEN=test_token_admin
+
+gh issue view 11 -R octocat/hello-world
+gh pr create --head fix --base main --title Fix --body "Fixes #11"
+```
+
+Only `HTTP_PROXY` is set, so HTTPS traffic such as `npm install` is unaffected. `NO_PROXY` is the
+escape hatch.
+
+## Using the GitHub MCP server
+
+The MCP server accepts plain HTTP only for a loopback host, so point it at `localhost` directly. Go
+never proxies `localhost`, so it bypasses `HTTP_PROXY` and both clients can be configured at once:
+
+```bash
+export GITHUB_HOST=http://localhost:4001
+export GITHUB_PERSONAL_ACCESS_TOKEN=test_token_admin
+```
+
+REST is served at the root and under `/api/v3`, GraphQL at `/graphql` and `/api/graphql`, and raw
+file content at `/raw/:owner/:repo/:ref/:path`.
+
+## Importing a real repository
+
+`scripts/import-github` snapshots a real repository into seed state, including full commit history,
+every issue and pull request with comments, and the label set.
+
+```bash
+GITHUB_TOKEN=<token> scripts/import-github vercel-labs/emulate \
+  --ref ceb5884a1a2b1ad2d418955714b241b6018bd056 --as demo/emulate --out ./fixture
+
+npx emulate start --service github --seed ./fixture/emulate.config.json
+```
+
+That example pins this repository to the commit immediately before the Slack emulator landed, so the
+import contains it with issue #6, "Slack Support", still open and pull request #10 not yet merged.
+
+`--ref` rewrites the mirror so a clone checks out that commit and carries only its history. A pinned
+snapshot implies a point in time, so issue and pull request state is rewound to the ref's commit date
+too: anything created later is left out, and anything closed or merged later comes back as open. Use
+`--as-of <iso>` for a different moment, or omit `--ref` to import current state.
+
+With a token the import is a single GraphQL query. Without one it falls back to REST, which allows
+only 60 requests per hour for anonymous callers.
+
+## Resetting between runs
+
+`POST /_emulate/reset` clears the store, discards the repository mirrors so a pushed branch cannot
+leak into a later run, and re-applies the seed.
+
 ## GitHub App keys
 
 The programmatic `createEmulator` API can generate a GitHub App key when `private_key` is omitted:

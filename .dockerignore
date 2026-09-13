@@ -1,0 +1,12 @@
+node_modules
+**/node_modules
+**/.turbo
+.git
+.github
+apps
+examples
+tests
+opensrc
+*.log
+.DS_Store
+emulate-import

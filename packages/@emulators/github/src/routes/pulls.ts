@@ -23,12 +23,11 @@ import {
   formatRepo,
   formatUser,
   generateNodeId,
-  generateSha,
   getNextIssueNumber,
   lookupRepo,
   timestamp,
 } from "../helpers.js";
-import { findOrCreateCommit } from "../git-helpers.js";
+import { diffTrees, findCommitBySha, findOrCreateCommit, formatFileDiff, type FileDiff } from "../git-helpers.js";
 
 function findPull(gh: GitHubStore, repoId: number, pullNumber: number): GitHubPullRequest | undefined {
   return gh.pullRequests.findBy("repo_id", repoId).find((p) => p.number === pullNumber);
@@ -298,6 +297,79 @@ function lookupTeamSlug(gh: GitHubStore, orgId: number, slug: string) {
   return t;
 }
 
+function repoHasTree(gh: GitHubStore, repoId: number, treeSha: string): boolean {
+  return gh.trees.findBy("repo_id", repoId).some((tree) => tree.sha === treeSha);
+}
+
+function uniqueRepoIds(ids: Array<number | undefined>): number[] {
+  return ids.filter((id): id is number => id !== undefined).filter((id, index, all) => all.indexOf(id) === index);
+}
+
+function resolvePullFiles(gh: GitHubStore, pr: GitHubPullRequest): FileDiff[] {
+  const baseRepo = gh.repos.get(pr.base_repo_id);
+  const headRepo = gh.repos.get(pr.head_repo_id);
+  if (!baseRepo || !headRepo) return [];
+
+  const baseCommit =
+    findCommitBySha(gh, baseRepo.id, pr.base_sha) ??
+    (headRepo.id !== baseRepo.id ? findCommitBySha(gh, headRepo.id, pr.base_sha) : undefined);
+  const headCommit =
+    findCommitBySha(gh, headRepo.id, pr.head_sha) ??
+    (headRepo.id !== baseRepo.id ? findCommitBySha(gh, baseRepo.id, pr.head_sha) : undefined);
+
+  if (!baseCommit || !headCommit) return [];
+
+  const repoId = uniqueRepoIds([baseCommit.repo_id, headCommit.repo_id, baseRepo.id, headRepo.id]).find(
+    (candidate) => repoHasTree(gh, candidate, baseCommit.tree_sha) && repoHasTree(gh, candidate, headCommit.tree_sha),
+  );
+  if (repoId === undefined) return [];
+
+  return diffTrees(gh, repoId, baseCommit.tree_sha, headCommit.tree_sha);
+}
+
+function pullDiffMediaType(accept: string | undefined): "diff" | "patch" | null {
+  for (const part of accept?.split(",") ?? []) {
+    const mediaType = part.split(";")[0].trim().toLowerCase();
+    if (mediaType === "application/vnd.github.v3.diff" || mediaType === "application/vnd.github.diff") return "diff";
+    if (mediaType === "application/vnd.github.v3.patch" || mediaType === "application/vnd.github.patch") {
+      return "patch";
+    }
+  }
+  return null;
+}
+
+function diffPath(path: string): string {
+  return path;
+}
+
+function formatUnifiedFileDiff(file: FileDiff): string {
+  const oldPath = file.previous_filename ?? file.filename;
+  const lines = [`diff --git a/${diffPath(oldPath)} b/${diffPath(file.filename)}`];
+
+  if (file.status === "added") {
+    lines.push("new file mode 100644");
+  } else if (file.status === "removed") {
+    lines.push("deleted file mode 100644");
+  } else if (file.status === "renamed") {
+    lines.push("similarity index 100%", `rename from ${diffPath(oldPath)}`, `rename to ${diffPath(file.filename)}`);
+  }
+
+  if (file.patch !== undefined) {
+    lines.push(
+      `--- ${file.status === "added" ? "/dev/null" : `a/${diffPath(oldPath)}`}`,
+      `+++ ${file.status === "removed" ? "/dev/null" : `b/${diffPath(file.filename)}`}`,
+      file.patch,
+    );
+  }
+
+  return lines.join("\n");
+}
+
+function formatUnifiedDiff(files: FileDiff[]): string {
+  if (files.length === 0) return "";
+  return `${files.map(formatUnifiedFileDiff).join("\n")}\n`;
+}
+
 export function pullsRoutes({ app, store, webhooks, baseUrl }: RouteContext): void {
   const gh = getGitHubStore(store);
 
@@ -475,6 +547,13 @@ export function pullsRoutes({ app, store, webhooks, baseUrl }: RouteContext): vo
 
     const pr = findPull(gh, repo.id, pullNumber);
     if (!pr) throw notFoundResponse();
+
+    const mediaType = pullDiffMediaType(c.req.header("Accept"));
+    if (mediaType) {
+      return c.text(formatUnifiedDiff(resolvePullFiles(gh, pr)), 200, {
+        "Content-Type": `application/vnd.github.v3.${mediaType}`,
+      });
+    }
 
     const fmt = formatPullRequest(pr, gh, baseUrl);
     if (!fmt) throw notFoundResponse();
@@ -759,27 +838,13 @@ export function pullsRoutes({ app, store, webhooks, baseUrl }: RouteContext): vo
     if (!pr) throw notFoundResponse();
 
     const { page, per_page } = parsePagination(c);
-    const n = pr.changed_files;
-    const stubNames = Array.from({ length: n }, (_, i) => `file${i + 1}.ts`);
-    const total = stubNames.length;
+    const files = resolvePullFiles(gh, pr);
+    const total = files.length;
     setLinkHeader(c, total, page, per_page);
     const start = (page - 1) * per_page;
-    const pageNames = stubNames.slice(start, start + per_page);
+    const pageFiles = files.slice(start, start + per_page);
 
-    return c.json(
-      pageNames.map((filename, i) => ({
-        sha: generateSha(),
-        filename,
-        status: "modified",
-        additions: 1,
-        deletions: 0,
-        changes: 1,
-        blob_url: `${baseUrl}/${repo.full_name}/blob/${pr.head_sha}/${filename}`,
-        raw_url: `${baseUrl}/${repo.full_name}/raw/${pr.head_sha}/${filename}`,
-        contents_url: `${baseUrl}/repos/${repo.full_name}/contents/${encodeURIComponent(filename)}?ref=${pr.head_ref}`,
-        patch: "",
-      })),
-    );
+    return c.json(pageFiles.map((file) => formatFileDiff(file, repo, pr.base_sha, pr.head_sha, baseUrl)));
   });
 
   app.post("/repos/:owner/:repo/pulls/:pull_number/requested_reviewers", async (c) => {

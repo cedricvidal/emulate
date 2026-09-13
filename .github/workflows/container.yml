@@ -1,0 +1,202 @@
+name: Container Image
+
+# Publishes a preview of the GitHub emulator container to GHCR.
+#
+# This builds work that is not part of an upstream release, so every tag is
+# marked accordingly and "latest" is never published. Someone pulling this image
+# should be able to tell from the tag alone that it is a branch build.
+#
+# Manual only. GITHUB_TOKEN carries packages:write, so no personal access token
+# is involved.
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number (detected from the branch when omitted)
+        required: false
+        type: string
+      suffix:
+        description: Optional label to append to the preview tag
+        required: false
+        type: string
+      platforms:
+        description: Target platforms
+        required: false
+        default: linux/amd64,linux/arm64
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The Dockerfile copies a prebuilt bundle rather than installing packages,
+      # so the workspace has to be built before the image.
+      - name: Build workspace
+        run: pnpm build
+
+      - name: Build CLI bundle
+        run: pnpm --filter emulate build:bundle
+
+      # Both the name and the tag carry the warning, so provenance survives even
+      # when only one of them is visible. The name pins it to an author and a
+      # pull request; the tag pins it to a commit.
+      - name: Resolve preview image name and tag
+        id: meta
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          VERSION=$(node -p "require('./packages/emulate/package.json').version")
+          BRANCH=$(echo "${GITHUB_REF_NAME}" | tr '/' '-' | tr -cd '[:alnum:]-_.')
+          SHORT_SHA=$(git rev-parse --short HEAD)
+
+          PR="${{ inputs.pr }}"
+          if [ -z "$PR" ]; then
+            PR=$(gh pr list --repo "${GITHUB_REPOSITORY}" --head "${GITHUB_REF_NAME}" \
+                   --state all --limit 1 --json number --jq '.[0].number // empty' || true)
+          fi
+
+          # The handle is repeated inside the name on purpose. Mirroring the
+          # image into another registry replaces the namespace, and the name is
+          # then the only thing left carrying provenance.
+          #
+          # A pull request number is the clearest provenance, but a branch build
+          # without one still must not look official.
+          if [ -n "$PR" ]; then
+            NAME="${OWNER}-emulate-github-pr${PR}"
+            SCOPE="pr${PR}"
+          else
+            SHORT_BRANCH=$(echo "$BRANCH" | cut -c1-24 | sed 's/[-_.]*$//')
+            NAME="${OWNER}-emulate-github-branch-${SHORT_BRANCH}"
+            SCOPE="${SHORT_BRANCH}"
+          fi
+
+          IMAGE="ghcr.io/${OWNER}/${NAME}"
+          TAG="${VERSION}-preview.${SCOPE}.${SHORT_SHA}"
+          SUFFIX="${{ inputs.suffix }}"
+          if [ -n "$SUFFIX" ]; then
+            TAG="${TAG}.$(echo "$SUFFIX" | tr -cd '[:alnum:]-_.')"
+          fi
+
+          # Refuse anything that could read as a release. Nothing here is one.
+          case "$TAG" in
+            latest|stable|"$VERSION") echo "refusing release-like tag: $TAG" >&2; exit 1 ;;
+          esac
+
+          {
+            echo "image=$IMAGE"
+            echo "tag=$TAG"
+            echo "ref=${GITHUB_REPOSITORY}@${SHORT_SHA} (${GITHUB_REF_NAME}${PR:+, PR #$PR})"
+          } >> "$GITHUB_OUTPUT"
+          echo "Publishing $IMAGE:$TAG"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ inputs.platforms || 'linux/amd64,linux/arm64' }}
+          push: true
+          # Deliberately no "latest". This is a branch build, so it must never
+          # become the tag someone gets by default.
+          tags: ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
+          build-args: |
+            EMULATE_BUILD_CHANNEL=preview
+            EMULATE_BUILD_REF=${{ steps.meta.outputs.ref }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.tag }}
+            org.opencontainers.image.description=Unofficial preview build from ${{ github.ref_name }}. Not a release.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # A published image that cannot clone or serve the API is worse than no
+      # image, so the freshly pushed one is exercised before the job passes.
+      - name: Smoke test the published image
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          IMAGE_REF="${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}"
+          docker run -d --name emulate-smoke -p 8080:80 \
+            -e GITHUB_TOKEN="$GH_TOKEN" \
+            "$IMAGE_REF" \
+            scripts/import-github vercel-labs/emulate \
+            --ref ceb5884a1a2b1ad2d418955714b241b6018bd056 --as demo/emulate
+
+          for i in $(seq 1 60); do
+            if curl -fsS -H 'Authorization: token demo-token' \
+              http://localhost:8080/repos/demo/emulate >/dev/null 2>&1; then
+              break
+            fi
+            if [ "$i" = "60" ]; then
+              echo "emulator did not become ready" >&2
+              docker logs emulate-smoke
+              exit 1
+            fi
+            sleep 2
+          done
+
+          STATE=$(curl -fsS -H 'Authorization: token demo-token' \
+            http://localhost:8080/repos/demo/emulate/issues/6 \
+            | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>console.log(JSON.parse(d).state))")
+          [ "$STATE" = "open" ] || { echo "issue 6 expected open, got $STATE" >&2; exit 1; }
+
+          git -c safe.bareRepository=all clone -q http://localhost:8080/demo/emulate.git /tmp/smoke
+          HEAD_SHA=$(git -C /tmp/smoke rev-parse HEAD)
+          EXPECTED=ceb5884a1a2b1ad2d418955714b241b6018bd056
+          [ "$HEAD_SHA" = "$EXPECTED" ] || { echo "clone expected $EXPECTED, got $HEAD_SHA" >&2; exit 1; }
+
+          docker logs emulate-smoke 2>&1 | grep -q "UNOFFICIAL PREVIEW BUILD" \
+            || { echo "preview notice missing from startup output" >&2; exit 1; }
+
+          echo "smoke test passed: issue 6 open, clone pinned to ${EXPECTED:0:12}, preview notice shown"
+          docker rm -f emulate-smoke >/dev/null
+
+      - name: Summarise
+        run: |
+          {
+            echo "### Preview image published"
+            echo
+            echo '```'
+            echo "docker pull ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}"
+            echo '```'
+            echo
+            echo "Built from ${{ steps.meta.outputs.ref }}."
+            echo "This is not a release and is not affiliated with the upstream project."
+            echo "The package stays private unless its visibility is changed."
+          } >> "$GITHUB_STEP_SUMMARY"
