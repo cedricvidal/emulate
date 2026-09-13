@@ -9,7 +9,7 @@
  *
  *   scripts/import-github <owner/repo> [options]
  *
- *   --ref <sha>        Commit to record as the pinned import ref
+ *   --ref <sha>        Pin the snapshot to this commit
  *   --as <owner/repo>  Serve the repository under a different name
  *   --out <dir>        Output directory (default: ./emulate-import)
  *   --snapshot <dir>   Alias for --out, kept for symmetry with the container flags
@@ -24,6 +24,7 @@
 import { execFile } from "child_process";
 import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "fs";
 import { dirname, join, resolve } from "path";
+import { pathToFileURL } from "url";
 import { promisify } from "util";
 
 const execFileAsync = promisify(execFile);
@@ -47,6 +48,7 @@ function parseArgs(argv) {
     else if (arg === "--as") args.as = argv[++i];
     else if (arg === "--out" || arg === "--snapshot") args.out = argv[++i];
     else if (arg === "--token") args.token = argv[++i];
+    else if (arg === "--as-of") args.asOf = argv[++i];
     else if (arg === "--rest") args.forceRest = true;
     else if (arg === "--help" || arg === "-h") args.help = true;
     else if (arg.startsWith("-")) fail(`unknown option: ${arg}`);
@@ -380,6 +382,87 @@ async function cloneMirror(owner, name, target) {
   }
 }
 
+function git(gitDir, args) {
+  return execFileAsync("git", ["-c", "safe.bareRepository=all", `--git-dir=${gitDir}`, ...args]);
+}
+
+/**
+ * Rewrites the mirror so it represents the repository exactly as it stood at
+ * `ref`, and returns that commit's date.
+ *
+ * Without this the mirror is whatever the default branch points at today, which
+ * silently produces a snapshot containing work that did not exist at the pinned
+ * commit. Later refs are removed and unreachable objects pruned, so a clone of
+ * the result checks out the pinned commit and carries only its history.
+ */
+export async function pinToRef(gitDir, ref, defaultBranch) {
+  let oid;
+  try {
+    const { stdout } = await git(gitDir, ["rev-parse", `${ref}^{commit}`]);
+    oid = stdout.trim();
+  } catch {
+    fail(`ref not found in ${gitDir}: ${ref}`);
+  }
+
+  const { stdout: dateOut } = await git(gitDir, ["show", "-s", "--format=%cI", oid]);
+  const committedAt = dateOut.trim();
+
+  // Drop every ref first, then recreate only the default branch at the pin, so
+  // no later branch or pull request head keeps future history alive.
+  const { stdout: refsOut } = await git(gitDir, ["for-each-ref", "--format=%(refname)"]);
+  for (const refName of refsOut.split("\n").map((r) => r.trim()).filter(Boolean)) {
+    await git(gitDir, ["update-ref", "-d", refName]).catch(() => {});
+  }
+
+  await git(gitDir, ["update-ref", `refs/heads/${defaultBranch}`, oid]);
+  await git(gitDir, ["symbolic-ref", "HEAD", `refs/heads/${defaultBranch}`]);
+  await git(gitDir, ["reflog", "expire", "--all", "--expire=now"]).catch(() => {});
+  await git(gitDir, ["gc", "--prune=now", "--quiet"]).catch(() => {});
+
+  console.error(`  pinned ${defaultBranch} to ${oid.slice(0, 12)} (${committedAt})`);
+  return { oid, committedAt };
+}
+
+/**
+ * Rebuilds issue and pull request state as it stood at `cutoff`.
+ *
+ * An import otherwise reflects today, which is wrong for a pinned snapshot: an
+ * issue the scenario expects the agent to resolve would arrive already closed,
+ * and the pull request that resolved it already merged. Items created after the
+ * cutoff did not exist yet, and anything closed or merged after it was still
+ * open at the time.
+ */
+export function applyCutoff(data, cutoff) {
+  const at = Date.parse(cutoff);
+  const after = (value) => Boolean(value) && Date.parse(value) > at;
+  const existed = (item) => !after(item.created_at);
+
+  const rewind = (item) => {
+    const next = { ...item };
+    if (after(next.closed_at)) {
+      next.closed_at = undefined;
+      next.state = "open";
+    }
+    if (after(next.merged_at)) {
+      next.merged_at = undefined;
+      next.merged = undefined;
+      next.merge_commit_sha = undefined;
+      next.merged_by = undefined;
+      next.state = "open";
+    }
+    if (next.comments) {
+      next.comments = next.comments.filter((c) => !after(c.created_at));
+    }
+    return next;
+  };
+
+  return {
+    ...data,
+    issues: data.issues.filter(existed).map(rewind),
+    pulls: data.pulls.filter(existed).map(rewind),
+  };
+}
+
 async function countCommits(gitDir) {
   try {
     const { stdout } = await execFileAsync("git", [
@@ -404,10 +487,12 @@ async function main() {
       [
         "Usage: scripts/import-github <owner/repo> [options]",
         "",
-        "  --ref <sha>        Commit to record as the pinned import ref",
+        "  --ref <sha>        Pin the snapshot to this commit",
         "  --as <owner/repo>  Serve the repository under a different name",
         "  --out <dir>        Output directory (default: ./emulate-import)",
         "  --snapshot <dir>   Alias for --out",
+        "  --as-of <iso>      Rebuild issue and pull request state as of this time",
+        "                     (defaults to the --ref commit date)",
         "  --token <token>    GitHub token (default: GITHUB_TOKEN or GH_TOKEN)",
         "  --rest             Force the REST path even when a token is present",
       ].join("\n"),
@@ -440,9 +525,26 @@ async function main() {
     const gitDir = join(staging, gitDirRelative);
     await cloneMirror(owner, name, gitDir);
 
-    const data = token && !args.forceRest
+    let data = token && !args.forceRest
       ? await collectViaGraphQL(owner, name, token)
       : await collectViaRest(owner, name, token);
+
+    let pinned = null;
+    if (args.ref) {
+      pinned = await pinToRef(gitDir, args.ref, data.repo.default_branch);
+    }
+
+    // A pinned snapshot implies a point in time, so metadata is rewound to
+    // match unless the caller asks for a different moment.
+    const cutoff = args.asOf ?? pinned?.committedAt ?? null;
+    if (cutoff) {
+      const before = { issues: data.issues.length, pulls: data.pulls.length };
+      data = applyCutoff(data, cutoff);
+      console.error(
+        `  state as of ${cutoff}: ${data.issues.length}/${before.issues} issues, ` +
+          `${data.pulls.length}/${before.pulls} pull requests`,
+      );
+    }
 
     // Every referenced login must exist as a user, otherwise the seed silently
     // drops the records that point at it.
@@ -486,6 +588,8 @@ async function main() {
       source: `${owner}/${name}`,
       served_as: `${targetOwner}/${targetName}`,
       ref: args.ref ?? null,
+      pinned_commit: pinned?.oid ?? null,
+      state_as_of: cutoff,
       imported_at: new Date().toISOString(),
       counts: {
         commits,
@@ -514,4 +618,7 @@ async function main() {
   }
 }
 
-main().catch((error) => fail(error.stack ?? error.message));
+// Only run when invoked directly, so the helpers above can be unit tested.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => fail(error.stack ?? error.message));
+}
