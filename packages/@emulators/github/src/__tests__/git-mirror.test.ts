@@ -60,18 +60,36 @@ describe("git mirror", () => {
     const gitDir = repoGitDir(root, repo);
 
     const before = {
-      blobs: gh.blobs.findBy("repo_id", repo.id).map((b) => b.sha).sort(),
-      trees: gh.trees.findBy("repo_id", repo.id).map((t) => t.sha).sort(),
-      commits: gh.commits.findBy("repo_id", repo.id).map((c) => c.sha).sort(),
+      blobs: gh.blobs
+        .findBy("repo_id", repo.id)
+        .map((b) => b.sha)
+        .sort(),
+      trees: gh.trees
+        .findBy("repo_id", repo.id)
+        .map((t) => t.sha)
+        .sort(),
+      commits: gh.commits
+        .findBy("repo_id", repo.id)
+        .map((c) => c.sha)
+        .sort(),
     };
 
     syncToGit(gh, repo, gitDir);
     syncFromGit(gh, repo, gitDir);
 
     const after = {
-      blobs: gh.blobs.findBy("repo_id", repo.id).map((b) => b.sha).sort(),
-      trees: gh.trees.findBy("repo_id", repo.id).map((t) => t.sha).sort(),
-      commits: gh.commits.findBy("repo_id", repo.id).map((c) => c.sha).sort(),
+      blobs: gh.blobs
+        .findBy("repo_id", repo.id)
+        .map((b) => b.sha)
+        .sort(),
+      trees: gh.trees
+        .findBy("repo_id", repo.id)
+        .map((t) => t.sha)
+        .sort(),
+      commits: gh.commits
+        .findBy("repo_id", repo.id)
+        .map((c) => c.sha)
+        .sort(),
     };
 
     expect(after).toEqual(before);
@@ -98,17 +116,7 @@ describe("git mirror", () => {
       execFileSync("bash", ["-c", "echo 'hello from git' > feature.txt"], { cwd: clone });
       git(["-C", clone, "checkout", "-b", "feature"]);
       git(["-C", clone, "add", "feature.txt"]);
-      git([
-        "-C",
-        clone,
-        "-c",
-        "user.name=Dev",
-        "-c",
-        "user.email=dev@example.com",
-        "commit",
-        "-m",
-        "Add feature file",
-      ]);
+      git(["-C", clone, "-c", "user.name=Dev", "-c", "user.email=dev@example.com", "commit", "-m", "Add feature file"]);
       git(["-C", clone, "push", "origin", "feature"]);
 
       const result = syncFromGit(gh, repo, gitDir);

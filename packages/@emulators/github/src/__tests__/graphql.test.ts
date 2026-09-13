@@ -188,16 +188,12 @@ describe("graphql", () => {
   it("creates a pull request and keeps REST consistent", async () => {
     const { app } = createTestApp();
 
-    const repoRes = await gql(
-      app,
-      `query{repository(owner:"octocat",name:"demo"){id defaultBranchRef{target{oid}}}}`,
-    );
+    const repoRes = await gql(app, `query{repository(owner:"octocat",name:"demo"){id defaultBranchRef{target{oid}}}}`);
     const repoId = (repoRes.body.data as never as { repository: { id: string } }).repository.id;
 
     // A head branch must exist before a pull request can point at it.
-    const mainSha = (
-      repoRes.body.data as never as { repository: { defaultBranchRef: { target: { oid: string } } } }
-    ).repository.defaultBranchRef.target.oid;
+    const mainSha = (repoRes.body.data as never as { repository: { defaultBranchRef: { target: { oid: string } } } })
+      .repository.defaultBranchRef.target.oid;
     await app.request("/repos/octocat/demo/git/refs", {
       method: "POST",
       headers: { Authorization: "token test-token", "Content-Type": "application/json" },
@@ -212,8 +208,8 @@ describe("graphql", () => {
       { input: { repositoryId: repoId, baseRefName: "main", headRefName: "feature", title: "New", body: "Fixes #11" } },
     );
     expect(body.errors).toBeUndefined();
-    const pr = (body.data as never as { createPullRequest: { pullRequest: Record<string, unknown> } })
-      .createPullRequest.pullRequest;
+    const pr = (body.data as never as { createPullRequest: { pullRequest: Record<string, unknown> } }).createPullRequest
+      .pullRequest;
     // Seeded numbers run to 17, so the created pull request continues at 18.
     expect(pr.number).toBe(18);
     expect(pr.headRefName).toBe("feature");
@@ -257,7 +253,7 @@ describe("graphql", () => {
 
   it("reports errors with a 200, the way GitHub does", async () => {
     const { app } = createTestApp();
-    const { status, body } = await gql(app, "query{repository(owner:\"octocat\",name:\"demo\"){nope}}");
+    const { status, body } = await gql(app, 'query{repository(owner:"octocat",name:"demo"){nope}}');
     expect(status).toBe(200);
     expect(body.errors?.[0].message).toMatch(/Cannot query field/);
   });

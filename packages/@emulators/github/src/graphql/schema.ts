@@ -51,9 +51,7 @@ export const typeDefs = /* GraphQL */ `
     text: String
   }
 
-  union ProjectV2ItemFieldValue =
-      ProjectV2ItemFieldSingleSelectValue
-    | ProjectV2ItemFieldTextValue
+  union ProjectV2ItemFieldValue = ProjectV2ItemFieldSingleSelectValue | ProjectV2ItemFieldTextValue
 
   type ProjectV2Item {
     id: ID!
@@ -680,8 +678,6 @@ export const typeDefs = /* GraphQL */ `
     updatePullRequest(input: UpdatePullRequestInput!): UpdatePullRequestPayload
     closeIssue(input: CloseIssueInput!): CloseIssuePayload
     reopenIssue(input: ReopenIssueInput!): ReopenIssuePayload
-    markPullRequestReadyForReview(
-      input: MarkPullRequestReadyForReviewInput!
-    ): MarkPullRequestReadyForReviewPayload
+    markPullRequestReadyForReview(input: MarkPullRequestReadyForReviewInput!): MarkPullRequestReadyForReviewPayload
   }
 `;

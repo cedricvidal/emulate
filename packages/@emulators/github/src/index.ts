@@ -276,7 +276,8 @@ function resolveSeedPath(config: GitHubSeedConfig, path: string): string {
   return resolvePath(config.base_dir ?? process.cwd(), path);
 }
 
-export function createAppKeyResolver(store: Store): AppKeyResolver {  return (appId: number) => {
+export function createAppKeyResolver(store: Store): AppKeyResolver {
+  return (appId: number) => {
     try {
       const gh = getGitHubStore(store);
       const ghApp = gh.apps.all().find((app) => app.app_id === appId);

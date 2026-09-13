@@ -167,9 +167,7 @@ export function gitTransportRoutes(ctx: RouteContext, options: GitTransportOptio
           forced: false,
           repository: { full_name: repo.full_name, name: repo.name },
           pusher: { name: pusher },
-          head_commit: commit
-            ? { id: commit.sha, message: commit.message, timestamp: commit.committer_date }
-            : null,
+          head_commit: commit ? { id: commit.sha, message: commit.message, timestamp: commit.committer_date } : null,
         },
         repo.full_name.split("/")[0],
         repo.name,

@@ -15,13 +15,42 @@ describe("applyCutoff", () => {
     repo: { default_branch: "main" },
     labels: [],
     issues: [
-      { number: 6, title: "Slack Support", state: "closed", created_at: "2026-03-23T20:44:19Z", closed_at: "2026-03-24T16:47:28Z" },
+      {
+        number: 6,
+        title: "Slack Support",
+        state: "closed",
+        created_at: "2026-03-23T20:44:19Z",
+        closed_at: "2026-03-24T16:47:28Z",
+      },
       { number: 30, title: "Filed later", state: "open", created_at: "2026-05-01T00:00:00Z" },
-      { number: 2, title: "Already closed", state: "closed", created_at: "2026-03-01T00:00:00Z", closed_at: "2026-03-02T00:00:00Z" },
+      {
+        number: 2,
+        title: "Already closed",
+        state: "closed",
+        created_at: "2026-03-01T00:00:00Z",
+        closed_at: "2026-03-02T00:00:00Z",
+      },
     ],
     pulls: [
-      { number: 10, title: "Slack emulator", state: "closed", merged: true, created_at: "2026-03-24T03:00:00Z", merged_at: "2026-03-24T16:47:26Z", merge_commit_sha: "abc", merged_by: "someone" },
-      { number: 5, title: "Merged before", state: "closed", merged: true, created_at: "2026-03-01T00:00:00Z", merged_at: "2026-03-02T00:00:00Z", merge_commit_sha: "def" },
+      {
+        number: 10,
+        title: "Slack emulator",
+        state: "closed",
+        merged: true,
+        created_at: "2026-03-24T03:00:00Z",
+        merged_at: "2026-03-24T16:47:26Z",
+        merge_commit_sha: "abc",
+        merged_by: "someone",
+      },
+      {
+        number: 5,
+        title: "Merged before",
+        state: "closed",
+        merged: true,
+        created_at: "2026-03-01T00:00:00Z",
+        merged_at: "2026-03-02T00:00:00Z",
+        merge_commit_sha: "def",
+      },
     ],
   };
 

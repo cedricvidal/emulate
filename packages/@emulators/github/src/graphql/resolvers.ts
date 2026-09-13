@@ -143,8 +143,7 @@ export function mapIssue(ctx: GraphQLContext, repo: GitHubRepo, issue: GitHubIss
     milestone: null,
     assignees: (args: { first?: number; last?: number }) => sliceConnection(assignees, args),
     labels: (args: { first?: number; last?: number }) => sliceConnection(labels, args),
-    comments: (args: { first?: number; last?: number }) =>
-      sliceConnection(commentsFor(ctx, repo, issue.number), args),
+    comments: (args: { first?: number; last?: number }) => sliceConnection(commentsFor(ctx, repo, issue.number), args),
     reactionGroups: [],
     viewerDidAuthor: ctx.viewerLogin === author?.login,
     repository: () => mapRepository(ctx, repo),
@@ -220,8 +219,7 @@ export function mapPullRequest(ctx: GraphQLContext, repo: GitHubRepo, pr: GitHub
     milestone: null,
     assignees: (args: { first?: number; last?: number }) => sliceConnection(assignees, args),
     labels: (args: { first?: number; last?: number }) => sliceConnection(labels, args),
-    comments: (args: { first?: number; last?: number }) =>
-      sliceConnection(commentsFor(ctx, repo, pr.number), args),
+    comments: (args: { first?: number; last?: number }) => sliceConnection(commentsFor(ctx, repo, pr.number), args),
     commits: (args: { first?: number; last?: number }) => {
       const head = mapCommit(ctx, repo, pr.head_sha);
       const nodes = head ? [{ commit: head }] : [];
@@ -333,18 +331,14 @@ export function mapRepository(ctx: GraphQLContext, repo: GitHubRepo) {
       }
       if (args.labels?.length) {
         items = items.filter((i) =>
-          args.labels!.every((name) =>
-            i.label_ids.some((id) => gh.labels.get(id)?.name === name),
-          ),
+          args.labels!.every((name) => i.label_ids.some((id) => gh.labels.get(id)?.name === name)),
         );
       }
       if (args.filterBy?.createdBy) {
         items = items.filter((i) => gh.users.get(i.user_id)?.login === args.filterBy!.createdBy);
       }
       if (args.filterBy?.assignee) {
-        items = items.filter((i) =>
-          i.assignee_ids.some((id) => gh.users.get(id)?.login === args.filterBy!.assignee),
-        );
+        items = items.filter((i) => i.assignee_ids.some((id) => gh.users.get(id)?.login === args.filterBy!.assignee));
       }
 
       const direction = args.orderBy?.direction === "ASC" ? 1 : -1;
@@ -352,7 +346,10 @@ export function mapRepository(ctx: GraphQLContext, repo: GitHubRepo) {
         (a, b) => direction * (new Date(a.created_at).getTime() - new Date(b.created_at).getTime()),
       );
 
-      return sliceConnection(items.map((i) => mapIssue(ctx, repo, i)), args);
+      return sliceConnection(
+        items.map((i) => mapIssue(ctx, repo, i)),
+        args,
+      );
     },
 
     pullRequests: (args: {
@@ -378,7 +375,10 @@ export function mapRepository(ctx: GraphQLContext, repo: GitHubRepo) {
         (a, b) => direction * (new Date(a.created_at).getTime() - new Date(b.created_at).getTime()),
       );
 
-      return sliceConnection(items.map((p) => mapPullRequest(ctx, repo, p)), args);
+      return sliceConnection(
+        items.map((p) => mapPullRequest(ctx, repo, p)),
+        args,
+      );
     },
 
     labels: (args: { first?: number; last?: number; query?: string }) => {
@@ -390,7 +390,10 @@ export function mapRepository(ctx: GraphQLContext, repo: GitHubRepo) {
     assignableUsers: (args: { first?: number; last?: number; query?: string }) => {
       let items = gh.users.all();
       if (args.query) items = items.filter((u) => u.login.includes(args.query!));
-      return sliceConnection(items.map((u) => mapUser(ctx, u)), args);
+      return sliceConnection(
+        items.map((u) => mapUser(ctx, u)),
+        args,
+      );
     },
 
     milestones: (args: { first?: number; last?: number }) =>
@@ -553,7 +556,10 @@ export function createRootValue(ctx: GraphQLContext) {
       } as unknown as Parameters<typeof gh.pullRequests.insert>[0]);
       gh.pullRequests.update(prRow.id, { node_id: generateNodeId("PullRequest", prRow.id) });
 
-      return { clientMutationId: input.clientMutationId ?? null, pullRequest: mapPullRequest(ctx, repo, gh.pullRequests.get(prRow.id)!) };
+      return {
+        clientMutationId: input.clientMutationId ?? null,
+        pullRequest: mapPullRequest(ctx, repo, gh.pullRequests.get(prRow.id)!),
+      };
     },
 
     mergePullRequest: ({ input }: { input: Record<string, unknown> }) => {
@@ -651,7 +657,9 @@ export function createRootValue(ctx: GraphQLContext) {
       gh.issues.update(issue.id, {
         state: "closed",
         closed_at: new Date().toISOString(),
-        state_reason: input.stateReason ? (String(input.stateReason).toLowerCase() as GitHubIssue["state_reason"]) : "completed",
+        state_reason: input.stateReason
+          ? (String(input.stateReason).toLowerCase() as GitHubIssue["state_reason"])
+          : "completed",
       });
       return {
         clientMutationId: input.clientMutationId ?? null,

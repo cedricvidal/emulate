@@ -85,9 +85,9 @@ describe("repository content seeding", () => {
     });
 
     const repo = gh.repos.findOneBy("full_name", "octocat/nested")!;
-    const root = gh.trees.findBy("repo_id", repo.id).find(
-      (t) => t.sha === gh.commits.findBy("repo_id", repo.id)[0].tree_sha,
-    )!;
+    const root = gh.trees
+      .findBy("repo_id", repo.id)
+      .find((t) => t.sha === gh.commits.findBy("repo_id", repo.id)[0].tree_sha)!;
     const src = root.tree.find((e) => e.path === "src")!;
     expect(src.type).toBe("tree");
 

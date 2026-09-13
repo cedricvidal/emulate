@@ -105,16 +105,22 @@ describe("issue and pull request seeding", () => {
     // A PR must also exist as an issue row, or comments and numbering break.
     const prIssueRows = gh.issues.findBy("repo_id", repo.id).filter((i) => i.is_pull_request);
     expect(prIssueRows.map((i) => i.number).sort((a, b) => a - b)).toEqual([10, 17]);
-    expect(gh.pullRequests.findBy("repo_id", repo.id).map((p) => p.number).sort((a, b) => a - b)).toEqual([10, 17]);
+    expect(
+      gh.pullRequests
+        .findBy("repo_id", repo.id)
+        .map((p) => p.number)
+        .sort((a, b) => a - b),
+    ).toEqual([10, 17]);
   });
 
   it("shares one number sequence, so the next created item continues it", async () => {
     const { app } = createTestApp();
 
-    const res = await app.request(
-      `${repoPath}/issues`,
-      { method: "POST", headers: { ...auth, "Content-Type": "application/json" }, body: JSON.stringify({ title: "New" }) },
-    );
+    const res = await app.request(`${repoPath}/issues`, {
+      method: "POST",
+      headers: { ...auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "New" }),
+    });
     expect(res.status).toBe(201);
     const created = (await res.json()) as { number: number };
 

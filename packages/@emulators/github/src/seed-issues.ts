@@ -160,7 +160,7 @@ function insertIssueRow(
     label_ids: resolveLabelIds(gh, repo, entry.labels),
     milestone_id: null,
     comments: entry.comments?.length ?? 0,
-    closed_at: entry.closed_at ?? (state === "closed" ? entry.updated_at ?? null : null),
+    closed_at: entry.closed_at ?? (state === "closed" ? (entry.updated_at ?? null) : null),
     closed_by_id: null,
     is_pull_request: isPullRequest,
   } as Parameters<typeof gh.issues.insert>[0]);
@@ -244,7 +244,7 @@ export function seedPullRequests(
       draft: entry.draft ?? false,
       requested_reviewer_ids: [],
       requested_team_ids: [],
-      closed_at: entry.closed_at ?? (state === "closed" ? entry.merged_at ?? null : null),
+      closed_at: entry.closed_at ?? (state === "closed" ? (entry.merged_at ?? null) : null),
       auto_merge: null,
     } as unknown as Parameters<typeof gh.pullRequests.insert>[0]);
 
