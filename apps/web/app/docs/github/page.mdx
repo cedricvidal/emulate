@@ -51,11 +51,19 @@ file content at `/raw/:owner/:repo/:ref/:path`.
 every issue and pull request with comments, and the label set.
 
 ```bash
-GITHUB_TOKEN=<token> scripts/import-github pamelafox/ndjson-readablestream \
-  --ref 30cbd398 --as mcp-demo/ndjson-readablestream --out ./fixture
+GITHUB_TOKEN=<token> scripts/import-github vercel-labs/emulate \
+  --ref ceb5884a1a2b1ad2d418955714b241b6018bd056 --as demo/emulate --out ./fixture
 
 npx emulate start --service github --seed ./fixture/emulate.config.json
 ```
+
+That example pins this repository to the commit immediately before the Slack emulator landed, so the
+import contains it with issue #6, "Slack Support", still open and pull request #10 not yet merged.
+
+`--ref` rewrites the mirror so a clone checks out that commit and carries only its history. A pinned
+snapshot implies a point in time, so issue and pull request state is rewound to the ref's commit date
+too: anything created later is left out, and anything closed or merged later comes back as open. Use
+`--as-of <iso>` for a different moment, or omit `--ref` to import current state.
 
 With a token the import is a single GraphQL query. Without one it falls back to REST, which allows
 only 60 requests per hour for anonymous callers.

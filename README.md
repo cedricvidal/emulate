@@ -495,32 +495,31 @@ Issues and pull requests are separate keys that share one number sequence, match
 github:
   git_dir: ./.emulate/git      # where bare repository mirrors live
   repos:
-    - owner: mcp-demo
-      name: ndjson-readablestream
+    - owner: demo
+      name: emulate
       default_branch: main
-      git_source: ./fixture/repos/mcp-demo/ndjson-readablestream.git
+      git_source: ./fixture/repos/demo/emulate.git
       labels:
-        - name: bug
-          color: d73a4a
-          description: Something isn't working
+        - name: enhancement
+          color: a2eeef
+          description: New feature or request
       issues:
-        - number: 11
-          title: Malformed JSON can break streaming
+        - number: 6
+          title: Slack Support
           state: open
           user: octocat
-          labels: [bug]
-          body_file: ./issues/11.md
+          labels: [enhancement]
+          body_file: ./issues/6.md
           comments:
             - user: octocat
-              body: Looking into it
+              body: Would be quite a nice addition.
       pull_requests:
-        - number: 17
-          title: Release v1.4.0
-          state: closed
+        - number: 10
+          title: "feat: add slack service emulator"
+          state: open
           user: octocat
-          merged: true
           base_ref: main
-          head_ref: release-1.4.0
+          head_ref: osc/6-slack-service-emulator
           head_sha: <sha>
 ```
 
@@ -741,14 +740,39 @@ and raw file content is available at `/raw/:owner/:repo/:ref/:path`.
 and pull request with its comments, and the label set.
 
 ```bash
-GITHUB_TOKEN=<token> scripts/import-github pamelafox/ndjson-readablestream \
-  --ref 30cbd398 --as mcp-demo/ndjson-readablestream --out ./fixture
+GITHUB_TOKEN=<token> scripts/import-github vercel-labs/emulate \
+  --ref ceb5884a1a2b1ad2d418955714b241b6018bd056 --as demo/emulate --out ./fixture
 
 npx emulate start --service github --seed ./fixture/emulate.config.json
 ```
 
+That example pins this repository to the commit immediately before the Slack emulator landed, so the
+import contains the repository as it stood with issue #6, "Slack Support", still open and pull
+request #10 not yet merged. It is a convenient fixture precisely because the intended resolution is
+already public.
+
+`--ref` rewrites the mirror so a clone checks out that commit and carries only its history. Because a
+pinned snapshot implies a point in time, issue and pull request state is rewound to the ref's commit
+date as well: anything created later is left out, and anything closed or merged later comes back as
+open. Pass `--as-of <iso>` to choose a different moment, or omit `--ref` to import the current state.
+
 A token is recommended. With one, the import is a single GraphQL query; without one it falls back to
 REST, which is limited to 60 requests per hour for anonymous callers.
+
+### Checking a scenario end to end
+
+`scripts/scenario-e2e.sh <base-url>` drives the whole loop against a running emulator and validates
+it the way an evaluation harness would: the issue is readable and open, the repository clones at the
+pinned commit, a branch pushes, and a pull request lands against the default branch with a closing
+reference and a gradeable diff.
+
+```bash
+SCENARIO_HEAD=ceb5884a1a2b1ad2d418955714b241b6018bd056 scripts/scenario-e2e.sh http://localhost:8080
+```
+
+`SCENARIO_REPO`, `SCENARIO_ISSUE`, `SCENARIO_EDIT_FILE`, and `SCENARIO_HEAD` select the target.
+Installing and building the imported project is opt in through `SCENARIO_BUILD=1`, since an older
+pinned commit will not always build with a current toolchain.
 
 ### Resetting between runs
 
@@ -765,8 +789,12 @@ pnpm build && pnpm --filter emulate build:bundle
 docker build -t <user>/emulate-github:<tag> .
 
 docker run -e GITHUB_TOKEN=<token> -p 8080:80 <user>/emulate-github:<tag> \
-  scripts/import-github pamelafox/ndjson-readablestream --as mcp-demo/ndjson-readablestream
+  scripts/import-github vercel-labs/emulate \
+  --ref ceb5884a1a2b1ad2d418955714b241b6018bd056 --as demo/emulate
 ```
+
+Then `git clone http://localhost:8080/demo/emulate.git` checks out `ceb5884`, and
+`GET /repos/demo/emulate/issues/6` returns the open "Slack Support" issue.
 
 The CLI is bundled into a single file, so the image builds without registry access. See
 `docker-compose.yml` for a topology that serves `gh`, `git`, MCP, and REST to an agent container over

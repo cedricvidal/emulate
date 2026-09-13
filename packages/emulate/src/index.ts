@@ -37,8 +37,10 @@ Using the gh CLI and the GitHub MCP server:
   Only HTTP_PROXY is needed, so npm and other HTTPS traffic is unaffected.
 
 Importing a real repository:
-  scripts/import-github <owner>/<repo> --as <owner>/<repo> --out <dir>
-  Imports full history plus issues, pull requests, comments, and labels.
+  scripts/import-github <owner>/<repo> --ref <sha> --as <owner>/<repo> --out <dir>
+  Imports history plus issues, pull requests, comments, and labels.
+  --ref pins the snapshot, and rewinds issue and pull request state to that commit's date.
+  Example: scripts/import-github vercel-labs/emulate --ref ceb5884... --as demo/emulate
 
 Linear API coverage:
   Issue queries and mutations include numeric priority and derived priorityLabel fields.

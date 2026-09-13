@@ -97,32 +97,31 @@ Issues and pull requests are separate keys that share one number sequence, match
 github:
   git_dir: ./.emulate/git      # where bare repository mirrors live
   repos:
-    - owner: mcp-demo
-      name: ndjson-readablestream
+    - owner: demo
+      name: emulate
       default_branch: main
-      git_source: ./fixture/repos/mcp-demo/ndjson-readablestream.git
+      git_source: ./fixture/repos/demo/emulate.git
       labels:
-        - name: bug
-          color: d73a4a
-          description: Something isn't working
+        - name: enhancement
+          color: a2eeef
+          description: New feature or request
       issues:
-        - number: 11
-          title: Malformed JSON can break streaming
+        - number: 6
+          title: Slack Support
           state: open
           user: octocat
-          labels: [bug]
-          body_file: ./issues/11.md
+          labels: [enhancement]
+          body_file: ./issues/6.md
           comments:
             - user: octocat
-              body: Looking into it
+              body: Would be quite a nice addition.
       pull_requests:
-        - number: 17
-          title: Release v1.4.0
-          state: closed
+        - number: 10
+          title: "feat: add slack service emulator"
+          state: open
           user: octocat
-          merged: true
           base_ref: main
-          head_ref: release-1.4.0
+          head_ref: osc/6-slack-service-emulator
           head_sha: <sha>
 ```
 

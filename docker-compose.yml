@@ -40,11 +40,11 @@ services:
       EMULATE_BASE_URL: http://github.localhost
     command:
       - scripts/import-github
-      - ${IMPORT_REPO:-pamelafox/ndjson-readablestream}
+      - ${IMPORT_REPO:-vercel-labs/emulate}
       - --ref
-      - ${IMPORT_REF:-30cbd398}
+      - ${IMPORT_REF:-ceb5884a1a2b1ad2d418955714b241b6018bd056}
       - --as
-      - ${IMPORT_AS:-mcp-demo/ndjson-readablestream}
+      - ${IMPORT_AS:-demo/emulate}
     volumes:
       # Persist the import so later runs start from identical state with no
       # network access. Remove this to re-import on every start.
