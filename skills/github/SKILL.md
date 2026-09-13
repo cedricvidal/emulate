@@ -29,8 +29,17 @@ Only `HTTP_PROXY` is set, so HTTPS traffic such as `npm install` is unaffected.
 GraphQL is at `/graphql` and `/api/graphql`, REST at the root and under `/api/v3`, raw content at
 `/raw/:owner/:repo/:ref/:path`, and `POST /_emulate/reset` restores seed state.
 
-Import a real repository with `scripts/import-github <owner>/<repo> --as <owner>/<repo>`, which
-brings full history plus issues, pull requests, comments, and labels.
+Import a real repository with `scripts/import-github`, which brings history plus issues, pull
+requests, comments, and labels:
+
+```bash
+GITHUB_TOKEN=<token> scripts/import-github vercel-labs/emulate \
+  --ref ceb5884a1a2b1ad2d418955714b241b6018bd056 --as demo/emulate --out ./fixture
+```
+
+`--ref` pins the snapshot: the clone checks out that commit and carries only its history, and issue
+and pull request state is rewound to the commit date, so anything closed or merged later comes back
+as open. Omit `--ref` to import current state, or use `--as-of <iso>` for a different moment.
 
 ## Start
 
